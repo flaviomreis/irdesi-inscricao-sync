@@ -1,0 +1,146 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Course {
+  id           String        @id @default(uuid())
+  name         String
+  short_name   String        @unique
+  moodle_id    String        @unique
+  course_class CourseClass[]
+  created_at   DateTime      @default(now())
+}
+
+model Institution {
+  id           String        @id @default(uuid())
+  name         String
+  short_name   String        @unique
+  uf           String
+  course_class CourseClass[]
+  created_at   DateTime      @default(now())
+}
+
+model CourseClass {
+  id                          String                     @id @default(uuid())
+  course_id                   String
+  course                      Course                     @relation(fields: [course_id], references: [id])
+  institution_id              String
+  institution                 Institution                @relation(fields: [institution_id], references: [id])
+  description                 String
+  enrollment                  Enrollment[]
+  created_at                  DateTime                   @default(now())
+  requireemployeeId           Boolean                    @default(false)
+  course_class_administrators CourseClassAdministrator[]
+  amountOfStudents            Int                        @default(0)
+
+  @@unique([course_id, institution_id, description])
+}
+
+model CourseClassAdministrator {
+  id               String      @id @default(uuid())
+  course_class_id  String
+  course_class     CourseClass @relation(fields: [course_class_id], references: [id])
+  email            String
+  canEnrollStudent Boolean     @default(false)
+
+  @@unique([course_class_id, email])
+}
+
+model Student {
+  id         String       @id @default(uuid())
+  name       String
+  last_name  String
+  email      String       @unique
+  cpf        String       @unique
+  employeeId String?
+  enrollment Enrollment[]
+  created_at DateTime     @default(now())
+
+  @@unique(fields: [email, cpf], name: "student")
+}
+
+model Enrollment {
+  id                String             @id @default(uuid())
+  student_id        String
+  student           Student            @relation(fields: [student_id], references: [id])
+  course_class_id   String
+  course_class      CourseClass        @relation(fields: [course_class_id], references: [id])
+  enrollment_status EnrollmentStatus[]
+  created_at        DateTime           @default(now())
+
+  @@unique(fields: [course_class_id, student_id], name: "enrollment")
+}
+
+// 0: john-doe/waiting, 1: john-doe/confirmed, 2: john-doe/active
+model EnrollmentStatus {
+  id                     String     @id @default(uuid())
+  enrollment_id          String
+  enrollment             Enrollment @relation(fields: [enrollment_id], references: [id])
+  enrollment_status_type String     @default("Sent")
+  created_at             DateTime   @default(now())
+
+  @@unique(fields: [enrollment_id, enrollment_status_type], name: "enrollment_status")
+}
+
+model Administrator {
+  id    String @id @default(uuid())
+  name  String
+  email String @unique
+}
+
+//
+// next-auth-prisma
+// 
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
