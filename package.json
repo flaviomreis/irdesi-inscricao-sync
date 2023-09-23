@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "rm -rf dist/ && tsc",
+    "build": "rm -rf dist/ && tsc -p .",
     "dev": "ts-node-dev --respawn ./src/index.ts",
     "start": "ts-node ./src/index.ts"
   },
