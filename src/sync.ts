@@ -1,12 +1,6 @@
 import { prisma } from "./db/connection";
 import sendMoodleRequest from "./moodle-request";
 
-const dtFormatter = new Intl.DateTimeFormat("pt-BR", {
-  dateStyle: "short",
-  timeStyle: "short",
-  timeZone: "America/Sao_Paulo",
-});
-
 export type StudentProps = {
   studentId: string;
   cpf: string;
@@ -29,8 +23,8 @@ export type SyncEnrollmentInput = {
     moodleId: string;
   };
   courseClassId: string;
-  enrollmentLastStatusType: string;
-  enrollmentLastStatusCreatedAt: Date;
+  actualStatusType: string;
+  confirmedAt: Date | null;
   student: {
     id: string;
     cpf: string;
@@ -47,179 +41,92 @@ export type SyncEnrollmentOutput = {
   courseProgress?: number;
 };
 
-async function updateUser(data: StudentProps) {
-  // await prisma.student.update({
-  //   where: {
-  //     id: data.studentId,
-  //   },
-  //   data: {
-  //     email: data.moodle.email,
-  //     name: data.moodle.name,
-  //     last_name: data.moodle.lastName,
-  //   },
-  // });
+export function getStatusType(
+  enrollmentConfirmedAt: Date | null,
+  courseLastAccess: Date | number | null,
+  courseProgress: number
+) {
+  const statusType = courseLastAccess
+    ? courseProgress < 100
+      ? "Active"
+      : "Completed"
+    : !enrollmentConfirmedAt
+    ? "Sent"
+    : "Confirmed";
+
+  return statusType;
+}
+
+export async function updateEnrollmentStatusIfNecessary(
+  enrollment_id: string,
+  actualStatusType: string,
+  enrollmentConfirmedAt: Date | null,
+  courseLastAccess: number | null,
+  courseProgress: number
+) {
+  const newStatusType = getStatusType(
+    enrollmentConfirmedAt,
+    courseLastAccess,
+    courseProgress
+  );
+  if (courseLastAccess) {
+    await prisma.enrollment.update({
+      where: {
+        id: enrollment_id,
+      },
+      data: {
+        last_access_at: new Date(courseLastAccess * 1000),
+        progress: courseProgress,
+      },
+    });
+  } else {
+    await updateEnrollmentToSent(enrollment_id);
+  }
+
+  if (actualStatusType !== newStatusType) {
+    return [actualStatusType, newStatusType];
+  } else {
+    return [actualStatusType];
+  }
+}
+
+export async function updateStudentIfNecessary(data: StudentProps) {
+  if (JSON.stringify(data.actual) !== JSON.stringify(data.moodle)) {
+    await prisma.student.update({
+      where: {
+        id: data.studentId,
+      },
+      data: {
+        email: data.moodle.email,
+        name: data.moodle.name,
+        last_name: data.moodle.lastName,
+      },
+    });
+    return "Dados do aluno foram atualizado";
+  } else {
+    return "Dados do aluno sem atualização";
+  }
 }
 
 async function updateEnrollmentToSent(enrollment_id: string) {
-  await prisma.enrollmentStatus.deleteMany({
+  await prisma.enrollment.update({
     where: {
-      AND: [
-        {
-          enrollment_id,
-        },
-        {
-          enrollment_status_type: {
-            not: "Sent",
-          },
-        },
-      ],
+      id: enrollment_id,
+    },
+    data: {
+      confirmed_at: null,
+      last_access_at: null,
+      progress: 0,
     },
   });
+  console.log("Algum muito estranho: Status retornado para Sent");
 }
 
-async function updateEnrollmentStatusIfNecessary(
-  enrollmentId: string,
-  enrollmentStatusType: string,
-  enrollmentStatusCreatedAt: Date,
-  courseStartDate: Date,
-  courseLastAccess: number | null,
-  courseCompleted: boolean
-): Promise<string[]> {
-  let newStatus = "";
-
-  if (courseCompleted) {
-    newStatus = "Completed";
-  } else {
-    if (courseLastAccess !== null) {
-      newStatus = "Active";
-    } else {
-      newStatus = "Confirmed";
-    }
-  }
-
-  let messages: string[] = [];
-
-  if (enrollmentStatusType === "Confirmed") {
-    if (newStatus === "Active") {
-      messages = await addEnrollmentStatusToStudent(
-        enrollmentId,
-        ["Active"],
-        courseStartDate
-      );
-    } else if (newStatus === "Completed") {
-      messages = await addEnrollmentStatusToStudent(
-        enrollmentId,
-        ["Active", "Completed"],
-        courseStartDate
-      );
-    }
-  }
-
-  if (enrollmentStatusType === "Active") {
-    if (newStatus === "Completed") {
-      messages = await addEnrollmentStatusToStudent(
-        enrollmentId,
-        ["Completed"],
-        courseStartDate
-      );
-    }
-  }
-
-  if (enrollmentStatusType === "Completed") {
-    if (newStatus === "Confirmed") {
-      messages = await removeEnrollmentStatusFromStudent(enrollmentId, [
-        "Confirmed",
-        "Active",
-      ]);
-    }
-  }
-
-  if (enrollmentStatusType === "Active") {
-    if (newStatus === "Confirmed") {
-      messages = await removeEnrollmentStatusFromStudent(enrollmentId, [
-        "Active",
-      ]);
-    }
-  }
-
-  if (
-    enrollmentStatusType === newStatus &&
-    enrollmentStatusCreatedAt > courseStartDate
-  ) {
-    // await prisma.enrollment.update({
-    //   where: {
-    //     id: enrollmentId,
-    //   },
-    //   data: {
-    //     enrollment_status: {
-    //       create: [
-    //         {
-    //           enrollment_status_type: statusType,
-    //           created_at: createdAt,
-    //         },
-    //       ],
-    //     },
-    //   },
-    // });
-    messages = [
-      `Data/Hora da situação ${enrollmentStatusType} alterada para ${dtFormatter.format(
-        courseStartDate
-      )}`,
-    ];
-  }
-
-  return messages;
-}
-
-async function addEnrollmentStatusToStudent(
-  enrollmentId: string,
-  statusTypes: string[],
-  createdAt = new Date()
-): Promise<string[]> {
-  let messages: string[] = [];
-  for (let statusType of statusTypes) {
-    // await prisma.enrollment.update({
-    //   where: {
-    //     id: enrollmentId,
-    //   },
-    //   data: {
-    //     enrollment_status: {
-    //       create: [
-    //         {
-    //           enrollment_status_type: statusType,
-    //           created_at: createdAt,
-    //         },
-    //       ],
-    //     },
-    //   },
-    // });
-    messages.push(
-      `Adicionada situação ${statusType} em ${dtFormatter.format(createdAt)}`
-    );
-  }
-
-  return messages;
-}
-
-async function removeEnrollmentStatusFromStudent(
-  enrollmentId: string,
-  statusTypes: string[]
-): Promise<string[]> {
-  let messages: string[] = [];
-  for (let statusType of statusTypes) {
-    // await prisma.enrollmentStatus.delete({
-    //   where: {
-    //     enrollment_status: {
-    //       enrollment_id: enrollmentId,
-    //       enrollment_status_type: statusType,
-    //     },
-    //   },
-    // });
-    messages.push(`Removida situação ${statusType}`);
-  }
-
-  return messages;
-}
+/*
+ *
+ * Aqui começa
+ *
+ */
 
 export default async function syncEnrollment(
   input: SyncEnrollmentInput
@@ -244,7 +151,7 @@ export default async function syncEnrollment(
     return { messages: ["Erro ao tentar buscar aluno no Moodle"], status: 500 };
   }
 
-  if (!Array.isArray(findUserJson) || findUserJson.length != 1) {
+  if (!Array.isArray(findUserJson) || findUserJson.length == 0) {
     return {
       messages: ["Aluno não existente no Moodle."],
       status: 404,
@@ -277,12 +184,8 @@ export default async function syncEnrollment(
 
   let messages: string[] = [];
 
-  if (
-    JSON.stringify(studentData.actual) !== JSON.stringify(studentData.moodle)
-  ) {
-    await updateUser(studentData);
-    messages.push("Dados do aluno atualizado");
-  }
+  const message = await updateStudentIfNecessary(studentData);
+  messages.push(message);
 
   const userId = findUserJson[0].id;
   const findCoursesParams = {
@@ -315,91 +218,58 @@ export default async function syncEnrollment(
     };
   }
 
-  if (findCoursesJson.length < 1) {
-    updateEnrollmentToSent(input.enrollmentId);
-    if (input.enrollmentLastStatusType === "Sent") {
-      return {
-        messages: [
-          "Aluno não matriculado no curso",
-          "Situação alterada para Enviado",
-          ...messages,
-        ],
-        status: 404,
-      };
-    } else {
-      return {
-        messages: ["Aluno não matriculado no curso", ...messages],
-        status: 404,
-      };
-    }
-  }
-
   const index = findCoursesJson.findIndex(
     (course) => course.id == input.course.moodleId
   );
 
-  if (index < 0) {
-    updateEnrollmentToSent(input.enrollmentId);
-    if (input.enrollmentLastStatusType === "Sent") {
-      return {
-        messages: [
-          "Aluno não matriculado no curso",
-          `Situação alterada de ${input.enrollmentLastStatusType} para Sent`,
-          ...messages,
-        ],
-        status: 404,
-      };
-    } else {
-      return {
-        messages: ["Aluno não matriculado no curso", ...messages],
-        status: 404,
-      };
-    }
+  if (findCoursesJson.length < 1 || index < 0) {
+    await updateEnrollmentToSent(input.enrollmentId);
+    return {
+      messages: [
+        "Aluno não matriculado no curso",
+        `Situação alterada de ${input.actualStatusType} para Sent`,
+        ...messages,
+      ],
+      status: 404,
+    };
   }
 
   ///
-  const findActivitiesParams = {
-    wstoken: process.env.MOODLE_GET_TOKEN!,
-    wsfunction: "core_completion_get_activities_completion_status",
-    moodlewsrestformat: "json",
-    userid: userId,
-    courseid: 2,
-  };
+  // const findActivitiesParams = {
+  //   wstoken: process.env.MOODLE_GET_TOKEN!,
+  //   wsfunction: "core_completion_get_activities_completion_status",
+  //   moodlewsrestformat: "json",
+  //   userid: userId,
+  //   courseid: 2,
+  // };
 
-  const { result: findActivitiesResult, json: findActivitiesJson } =
-    await sendMoodleRequest(findActivitiesParams);
+  // const { result: findActivitiesResult, json: findActivitiesJson } =
+  //   await sendMoodleRequest(findActivitiesParams);
 
-  const statuses = findActivitiesJson.statuses;
-  if (Array.isArray(statuses)) {
-    console.log(
-      dtFormatter.format(new Date(Number(statuses[0].timecompleted) * 1000))
-    );
-  }
+  // const statuses = findActivitiesJson.statuses;
+  // if (Array.isArray(statuses)) {
+  //   console.log(
+  //     dtFormatter.format(new Date(Number(statuses[0].timecompleted) * 1000))
+  //   );
+  // }
 
-  return {
-    messages: ["Activities", ...messages],
-    status: 200,
-  };
-  ///
-  const courseStartDate = new Date(
-    Number(findCoursesJson[index].startdate) * 1000
-  );
-  console.log(courseStartDate);
+  // return {
+  //   messages: ["Activities", ...messages],
+  //   status: 200,
+  // }
   const courseLastAccess = findCoursesJson[index].lastaccess;
   const courseProgress = findCoursesJson[index].progress;
-  const courseCompleted = findCoursesJson[index].completed;
   const statusTypeMessages = await updateEnrollmentStatusIfNecessary(
     input.enrollmentId,
-    input.enrollmentLastStatusType,
-    input.enrollmentLastStatusCreatedAt,
-    courseStartDate,
+    input.actualStatusType,
+    input.confirmedAt,
     courseLastAccess,
-    courseCompleted
+    courseProgress
   );
   messages = [...messages, ...statusTypeMessages];
 
   return {
-    messages: ["Aluno matriculado no curso", ...messages],
+    messages: ["Aluno matriculado", ...messages],
     status: 200,
     courseLastAccess,
     courseProgress,

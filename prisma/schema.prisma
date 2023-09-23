@@ -69,27 +69,28 @@ model Student {
 }
 
 model Enrollment {
-  id                String             @id @default(uuid())
-  student_id        String
-  student           Student            @relation(fields: [student_id], references: [id])
-  course_class_id   String
-  course_class      CourseClass        @relation(fields: [course_class_id], references: [id])
-  enrollment_status EnrollmentStatus[]
-  created_at        DateTime           @default(now())
+  id              String      @id @default(uuid())
+  student_id      String
+  student         Student     @relation(fields: [student_id], references: [id])
+  course_class_id String
+  course_class    CourseClass @relation(fields: [course_class_id], references: [id])
+  // enrollment_status EnrollmentStatus[]
+  created_at      DateTime    @default(now())
+  confirmed_at    DateTime?
+  last_access_at  DateTime?
+  progress        Float       @default(0)
 
   @@unique(fields: [course_class_id, student_id], name: "enrollment")
 }
 
 // 0: john-doe/waiting, 1: john-doe/confirmed, 2: john-doe/active
-model EnrollmentStatus {
-  id                     String     @id @default(uuid())
-  enrollment_id          String
-  enrollment             Enrollment @relation(fields: [enrollment_id], references: [id])
-  enrollment_status_type String     @default("Sent")
-  created_at             DateTime   @default(now())
-
-  @@unique(fields: [enrollment_id, enrollment_status_type], name: "enrollment_status")
-}
+// model EnrollmentStatus {
+//   id                     String     @id @default(uuid())
+//   enrollment_id          String
+//   enrollment             Enrollment @relation(fields: [enrollment_id], references: [id])
+//   enrollment_status_type String     @default("Sent")
+//   created_at             DateTime   @default(now())
+// }
 
 model Administrator {
   id    String @id @default(uuid())
