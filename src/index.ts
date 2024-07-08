@@ -7,71 +7,95 @@ const dtFormatter = new Intl.DateTimeFormat("pt-BR", {
   timeZone: "America/Sao_Paulo",
 });
 
-async function main() {
-  const enrollments = await prisma.enrollment.findMany({
+await (async () => {
+  const institutions = await prisma.institution.findMany({
     include: {
-      student: true,
       course_class: {
         include: {
           course: true,
-          institution: true,
+          enrollment: {
+            include: {
+              student: true,
+            },
+            orderBy: [
+              {
+                student: {
+                  name: "asc",
+                },
+              },
+              {
+                student: {
+                  last_name: "asc",
+                },
+              },
+            ],
+          }
         },
       },
     },
+    orderBy: [
+      {
+        short_name: 'asc'
+      }
+    ]
   });
 
-  for (let i = 0; i < enrollments.length; i++) {
-    const enrollment = enrollments[i];
-    const actualStatusType = getStatusType(
-      enrollment.confirmed_at,
-      enrollment.last_access_at,
-      enrollment.progress
-    );
-    if (actualStatusType === "Confirmed" || actualStatusType === "Active") {
-      const input = {
-        enrollmentId: enrollment.id,
-        course: {
-          id: enrollment.course_class.course.id,
-          moodleId: enrollment.course_class.course.moodle_id,
-        },
-        courseClassId: enrollment.course_class.id,
-        actualStatusType,
-        confirmedAt: enrollment.confirmed_at,
-        student: {
-          id: enrollment.student.id,
-          cpf: enrollment.student.cpf,
-          email: enrollment.student.email,
-          name: enrollment.student.name,
-          lastName: enrollment.student.last_name,
-        },
-      };
+  for (let j = 0; j < institutions.length; j++) {
+    const institution = institutions[j];
+    const enrollments = institution.course_class[0].enrollment;
+    console.log(`### ${institution.short_name}`)
 
-      const output: SyncEnrollmentOutput = await syncEnrollment(input);
-      if (output.courseLastAccess) {
-        const courseLastAccessInput = dtFormatter
-          .format(enrollment.last_access_at ?? undefined)
-          .replace(", ", " ");
+    for (let i = 0; i < enrollments.length; i++) {
+      const enrollment = enrollments[i];
+      const actualStatusType = getStatusType(
+        enrollment.confirmed_at,
+        enrollment.last_access_at,
+        enrollment.progress
+      );
+      if (actualStatusType === "Confirmed" || actualStatusType === "Active") {
+        const input = {
+          enrollmentId: enrollment.id,
+          course: {
+            id: institution.course_class[0].course_id,
+            moodleId: institution.course_class[0].course.moodle_id
+          },
+          courseClassId: institution.course_class[0].id,
+          actualStatusType,
+          confirmedAt: enrollment.confirmed_at,
+          student: {
+            id: enrollment.student.id,
+            cpf: enrollment.student.cpf,
+            email: enrollment.student.email,
+            name: enrollment.student.name,
+            lastName: enrollment.student.last_name,
+          },
+        };
 
-        const courseLastAccessOutput = dtFormatter
-          .format(new Date(output.courseLastAccess * 1000))
-          .replace(", ", " ");
+        const output: SyncEnrollmentOutput = await syncEnrollment(input);
+        if (output.courseLastAccess) {
+          const courseLastAccessInput = dtFormatter
+            .format(enrollment.last_access_at ?? undefined)
+            .replace(", ", " ");
 
-        output.messages.push(courseLastAccessInput);
-        if (courseLastAccessInput !== courseLastAccessOutput) {
-          output.messages.push(courseLastAccessOutput);
+          const courseLastAccessOutput = dtFormatter
+            .format(new Date(output.courseLastAccess * 1000))
+            .replace(", ", " ");
+
+          output.messages.push(courseLastAccessInput);
+          if (courseLastAccessInput !== courseLastAccessOutput) {
+            output.messages.push(courseLastAccessOutput);
+          }
         }
-      }
-      if (output.courseProgress) {
-        output.messages.push(enrollment.progress.toFixed(2));
-        if (
-          enrollment.progress.toFixed(2) !== output.courseProgress.toFixed(2)
-        ) {
-          output.messages.push(output.courseProgress.toFixed(2));
+        if (output.courseProgress) {
+          output.messages.push(enrollment.progress.toFixed(2));
+          if (
+            enrollment.progress.toFixed(2) !== output.courseProgress.toFixed(2)
+          ) {
+            output.messages.push(output.courseProgress.toFixed(2));
+          }
         }
+        console.log(`> ${input.student.cpf},${output.messages.join(",")}`);
       }
-      console.log(`> ${input.student.cpf},${output.messages.join(",")}`);
     }
   }
-}
-
-main();
+})()
